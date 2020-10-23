@@ -8,42 +8,42 @@ module Types =
 module Service =
     open Types
 
-    type Cmd = SendNewTime of TimeSpan | SleepWith of TimeSpan
+    type Cmd = SeekToTime of TimeSpan | Sleep of TimeSpan
 
-    let private handleGenericTime (times: (TimeSpan * TimeSpan) list) targetTime handleTime =
+    let private handleGenericTime times targetTime handleTime =
         times
-        |> List.tryFind (fun (s, e) -> targetTime >= s && targetTime <= e)
+        |> Array.tryFind (fun (s, e) -> targetTime >= s && targetTime <= e)
         |> Option.map handleTime
 
     let private handleFutureTime (status: Status) times period =
         handleGenericTime times (status.currentTime + period) (fun (s, _) ->
-            [ SleepWith (s - status.currentTime) ])
+            [ Sleep (s - status.currentTime) ])
 
     let private handleTimes (status: Status) times period =
-        handleGenericTime times status.currentTime  (fun (_, e) ->
-            [ SendNewTime e; SleepWith period ])
+        handleGenericTime times status.currentTime (fun (_, e) ->
+            [ SeekToTime e; Sleep period ])
 
     let makeCommandsForStatus optStatus times period =
-        let handleSesion status =
+        let handleStatus status =
             Map.tryFind status.videoId times
             |> Option.bind ^ fun times ->
                 handleTimes status times period
                 |> Option.orElse (handleFutureTime status times period)
 
         optStatus
-        |> Option.bind handleSesion
-        |> Option.defaultValue [ SleepWith period ]
+        |> Option.bind handleStatus
+        |> Option.defaultValue [ Sleep period ]
 
-    let main getStatus times seek =
+    let main getStatus times seek sleep =
         async {
-            while true do
-                let! status = getStatus
-                let cmds = makeCommandsForStatus status times (TimeSpan.FromSeconds 5.0)
-                printfn "Cmds: %A" cmds
-                for cmd in cmds do
-                    match cmd with
-                    | SendNewTime time -> do! seek time
-                    | SleepWith time -> do! Async.Sleep time
+            let! status = getStatus
+            let cmds = makeCommandsForStatus status times (TimeSpan.FromSeconds 5.0)
+            printfn "Cmds: %A" cmds
+
+            for cmd in cmds do
+                match cmd with
+                | SeekToTime time -> do! seek time
+                | Sleep time -> do! sleep time
         }
 
 module ChromeCast =
@@ -81,16 +81,34 @@ module ChromeCast =
             return ()
         }
 
+module Database =
+    open System.Collections.Generic
+    open System.Net
+    open System.Text.Json
+
+    let download (url: string) =
+        use client = new WebClient()
+
+        let dictionary : Dictionary<string, {| from: double; ``to``: double |} []> =
+            client.DownloadString url
+            |> JsonSerializer.Deserialize
+
+        dictionary
+        |> Seq.map (fun x ->
+            x.Key
+            , x.Value
+              |> Array.map (fun x -> TimeSpan.FromSeconds x.from, TimeSpan.FromSeconds x.``to``))
+        |> Map.ofSeq
+
 [<EntryPoint>]
 let main argv =
     async {
         let! t = ChromeCast.make
 
         let times =
-            Map.ofList [
-                "Le3564euPGQ", [ TimeSpan.FromSeconds 420.0, TimeSpan.FromSeconds 508.0 ]
-            ]
+            Database.download "https://raw.githubusercontent.com/y2k/chrome-cast-rewind-database/master/v1/ads.json"
 
-        do! Service.main (ChromeCast.getStatus t) times (ChromeCast.seek t)
+        while true do
+            do! Service.main (ChromeCast.getStatus t) times (ChromeCast.seek t) Async.Sleep
     } |> Async.RunSynchronously
     0
