@@ -1,3 +1,5 @@
+module CastService
+
 open System
 
 module Types =
@@ -10,25 +12,27 @@ module Service =
 
     type Cmd = SeekToTime of TimeSpan | Sleep of TimeSpan
 
+    let period = TimeSpan.FromSeconds 5.0
+
     let private handleGenericTime times targetTime handleTime =
         times
         |> Array.tryFind (fun (s, e) -> targetTime >= s && targetTime <= e)
         |> Option.map handleTime
 
-    let private handleFutureTime (status: Status) times period =
+    let private handleFutureTime (status: Status) times =
         handleGenericTime times (status.currentTime + period) (fun (s, _) ->
             [ Sleep (s - status.currentTime) ])
 
-    let private handleTimes (status: Status) times period =
+    let private handleTimes (status: Status) times =
         handleGenericTime times status.currentTime (fun (_, e) ->
             [ SeekToTime e; Sleep period ])
 
-    let makeCommandsForStatus optStatus times period =
+    let makeCommandsForStatus optStatus times =
         let handleStatus status =
             Map.tryFind status.videoId times
             |> Option.bind ^ fun times ->
-                handleTimes status times period
-                |> Option.orElse (handleFutureTime status times period)
+                handleTimes status times
+                |> Option.orElse (handleFutureTime status times)
 
         optStatus
         |> Option.bind handleStatus
@@ -37,7 +41,7 @@ module Service =
     let main getStatus times seek sleep =
         async {
             let! status = getStatus
-            let cmds = makeCommandsForStatus status times (TimeSpan.FromSeconds 5.0)
+            let cmds = makeCommandsForStatus status times
             printfn "Cmds: %A" cmds
 
             for cmd in cmds do
