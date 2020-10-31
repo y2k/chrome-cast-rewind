@@ -72,6 +72,10 @@ module ChromeCast =
             let! stat = mediaChannel.GetStatusAsync() |> Async.AwaitTask |> Async.catch
             return
                 stat
+                |> Result.bind (fun stat ->
+                    if isNull stat.Media
+                        then Error (exn "stat.Media is null")
+                        else Ok stat)
                 |> Result.map (fun stat ->
                     { videoId = stat.Media.ContentId
                       currentTime = TimeSpan.FromSeconds stat.CurrentTime })
