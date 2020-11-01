@@ -7,25 +7,23 @@ module Types =
         { videoId: string
           currentTime: TimeSpan }
 
-module Service =
+module Domain =
     open Types
 
     type Cmd = SeekToTime of TimeSpan | Sleep of TimeSpan
 
     let period = TimeSpan.FromSeconds 5.0
 
-    let private handleGenericTime times targetTime handleTime =
+    let private handleGenericTime targetTime handleTime times =
         times
         |> Array.tryFind (fun (s, e) -> targetTime >= s && targetTime <= e)
         |> Option.map handleTime
 
-    let private handleFutureTime (status: Status) times =
-        handleGenericTime times (status.currentTime + period) (fun (s, _) ->
-            [ Sleep (s - status.currentTime) ])
+    let private handleFutureTime (status: Status) =
+        handleGenericTime (status.currentTime + period) (fun (st, _) -> [ Sleep (st - status.currentTime) ])
 
-    let private handleTimes (status: Status) times =
-        handleGenericTime times status.currentTime (fun (_, e) ->
-            [ SeekToTime e; Sleep period ])
+    let private handleTimes (status: Status) =
+        handleGenericTime status.currentTime (fun (_, et) -> [ SeekToTime et; Sleep period ])
 
     let makeCommandsForStatus optStatus times =
         let handleStatus status =
@@ -117,6 +115,6 @@ let main argv =
             Database.download "https://raw.githubusercontent.com/y2k/chrome-cast-rewind-database/master/v1/ads.json"
 
         while true do
-            do! Service.main (ChromeCast.getStatus t) times (ChromeCast.seek t) Async.Sleep
+            do! Domain.main (ChromeCast.getStatus t) times (ChromeCast.seek t) Async.Sleep
     } |> Async.RunSynchronously
     0
